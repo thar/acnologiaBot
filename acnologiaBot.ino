@@ -7,20 +7,22 @@
 #define RIGHT_DISTANCE_A_PIN A1
 #define RIGHT_DISTANCE_D_PIN 5
 
-#define LEFT_FLOOR_SENSOR_PIN 7
-#define RIGHT_FLOOR_SENSOR_PIN 8
+#define LEFT_FLOOR_SENSOR_PIN 8
+#define RIGHT_FLOOR_SENSOR_PIN 7
 
-#define HALF_TURN_TIME 300
-#define FULL_BACKWARD_TIME 400
-#define SEARCH_TIME 500
+#define HALF_TURN_TIME 1000
+#define FULL_BACKWARD_TIME 1000
+#define SEARCH_TIME 1000
 
-#define FLOOR_SENSOR_THRESHOLD 1000
+#define FLOOR_SENSOR_THRESHOLD 2000
 
 #define MIN_DISTANCE_FOR_OBSTACLE 100
-#define MAX_DISTANCE_FOR_OBSTACLE 1500
+#define MAX_DISTANCE_FOR_OBSTACLE 700
 
 #define KP 10
 #define KD 100
+
+#define SPEED_REDUCTION 0
 
 AStar32U4ButtonA buttonA;
 AStar32U4ButtonB buttonB;
@@ -65,12 +67,19 @@ void fixPwmMaxValues(int &linealPwm, int &angularPwm) {
 // positives turns move to left
 void setSpeeds(int forward, int turn) {
     fixPwmMaxValues(forward, turn);
-    motors.setM1Speed(forward + turn);
-    motors.setM2Speed(forward - turn);
+    if (0 != SPEED_REDUCTION) {
+        forward *= 100 - SPEED_REDUCTION;
+        turn *= 100 - SPEED_REDUCTION;
+        forward /= 100;
+        turn /= 100;
+    }
+    motors.setM1Speed(forward - turn);
+    motors.setM2Speed(forward + turn);
 }
 
 
 bool isFloorSensorDetecting(unsigned int sensorValue) {
+  //return false;
     if (sensorValue > FLOOR_SENSOR_THRESHOLD) {
         return false;
     } else {
@@ -103,6 +112,7 @@ public:
         } else if (rightObstaclePresent && !leftObstaclePresent) {
             lastSeen = 1;
         }
+        /*
         Serial.print(leftDistance);
         Serial.print(',');
         Serial.print(rightDistance);
@@ -110,6 +120,7 @@ public:
         Serial.print(sensor_values[0]);
         Serial.print(',');
         Serial.println(sensor_values[1]);
+        */
     }
     bool isSomeObstacleDetected() {
         return leftObstaclePresent || rightObstaclePresent;
@@ -262,6 +273,7 @@ private:
 
 
 void MinisumoActionContext::step() {
+    sensors.updateState();
     if (nullptr == minisumoAction_)
         setMinisumoAction(getActionFromSensors(sensors));
     minisumoAction_->step(sensors);
@@ -304,11 +316,11 @@ MinisumoAction* getActionFromSensors(MinisumoSensors& sensors) {
         }
     } else {
         if (!sensors.leftObstaclePresent) {
-            Serial.println("OnlyLeftPresetAction");
-            return new OnlyLeftPresetAction();
-        } else if (!sensors.rightObstaclePresent) {
             Serial.println("OnlyRightPresetAction");
             return new OnlyRightPresetAction();
+        } else if (!sensors.rightObstaclePresent) {
+            Serial.println("OnlyLeftPresetAction");
+            return new OnlyLeftPresetAction();
         } else {
             Serial.println("AttackPidAction");
             return new AttackPidAction();
@@ -320,9 +332,10 @@ MinisumoAction* getActionFromSensors(MinisumoSensors& sensors) {
 void BothFloorSensorsDetected::doStep(MinisumoSensors& sensors) {
     long elapsedTime = millis() - startTime_;
     if (elapsedTime > FULL_BACKWARD_TIME) {
-        Serial.println("TimedTurn");
+        Serial.println("From BothFloorSensorsDetected to TimedTurn");
         context_->setMinisumoAction(new TimedTurn(sensors.lastSeen < 0 ? 1 : -1, HALF_TURN_TIME));
     } else if (!sensors.isSomeFloorSensorDetected() && sensors.isSomeObstacleDetected()) {
+      Serial.print("From BothFloorSensorsDetected to ");
         context_->setMinisumoAction(getActionFromSensors(sensors));
     }
 }
@@ -331,6 +344,7 @@ void BothFloorSensorsDetected::doStep(MinisumoSensors& sensors) {
 void OneFloorSensorsDetected::doStep(MinisumoSensors& sensors) {
     long actualTime = millis();
     if (actualTime > stopTime_ || !sensors.isSomeFloorSensorDetected() && sensors.isSomeObstacleDetected()) {
+      Serial.print("From OneFloorSensorsDetected to ");
         context_->setMinisumoAction(getActionFromSensors(sensors));
     }
 }
@@ -339,9 +353,10 @@ void OneFloorSensorsDetected::doStep(MinisumoSensors& sensors) {
 void TimedTurn::doStep(MinisumoSensors& sensors) {
     long actualTime = millis();
     if (actualTime > stopTime_) {
-        Serial.println("ForwardTilBorder");
+        Serial.println("From TimedTurn to ForwardTilBorder");
         context_->setMinisumoAction(new ForwardTilBorder());
     } else if (!sensors.isSomeFloorSensorDetected() && sensors.isSomeObstacleDetected()) {
+      Serial.print("From TimedTurn to ");
         context_->setMinisumoAction(getActionFromSensors(sensors));
     }
 }
@@ -349,6 +364,7 @@ void TimedTurn::doStep(MinisumoSensors& sensors) {
 
 void ForwardTilBorder::doStep(MinisumoSensors& sensors) {
     if (sensors.isSomeFloorSensorDetected() || sensors.isSomeObstacleDetected()) {
+      Serial.print("From ForwardTilBorder to ");
         context_->setMinisumoAction(getActionFromSensors(sensors));
     }
 }
@@ -356,6 +372,7 @@ void ForwardTilBorder::doStep(MinisumoSensors& sensors) {
 
 void OnlyLeftPresetAction::doStep(MinisumoSensors& sensors) {
     if (sensors.isSomeFloorSensorDetected() || !sensors.leftObstaclePresent || sensors.rightObstaclePresent) {
+      Serial.print("From OnlyLeftPresetAction to ");
         context_->setMinisumoAction(getActionFromSensors(sensors));
     }
 }
@@ -363,6 +380,7 @@ void OnlyLeftPresetAction::doStep(MinisumoSensors& sensors) {
 
 void OnlyRightPresetAction::doStep(MinisumoSensors& sensors) {
     if (sensors.isSomeFloorSensorDetected() || !sensors.rightObstaclePresent || sensors.leftObstaclePresent) {
+      Serial.print("From OnlyRightPresetAction to ");
         context_->setMinisumoAction(getActionFromSensors(sensors));
     }
 }
@@ -370,6 +388,7 @@ void OnlyRightPresetAction::doStep(MinisumoSensors& sensors) {
 
 void AttackPidAction::doStep(MinisumoSensors& sensors) {
     if (!sensors.leftObstaclePresent || !sensors.rightObstaclePresent) {
+      Serial.print("From AttackPidAction to ");
         context_->setMinisumoAction(getActionFromSensors(sensors));
     } else {
         long difference = static_cast<long>(sensors.rightDistance) - static_cast<long>(sensors.leftDistance);
@@ -394,7 +413,7 @@ void setup() {
   setSpeeds(0, 0);
   ledRed(0);
   ledYellow(0);
-  ledGreen(0);
+  ledGreen(1);
   buttonA.waitForButton();
   for (int i=0; i<4; ++i) {
     ledRed(1);
